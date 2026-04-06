@@ -1,0 +1,7 @@
+openai
+pydantic
+gradio
+plotly
+pandas
+openenv-core
+python-detenv

@@ -1,0 +1,9 @@
+version: "1.0"
+name: "cloud-cost-guardian"
+entry_point: "environment:CloudCostEnv"
+env_type: "continuous"
+tasks:
+  - id: "daily_peaks"
+    difficulty: "medium"
+    path: "inference.py"
+    target_score: 0.8

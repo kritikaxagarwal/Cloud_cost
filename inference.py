@@ -1,18 +1,29 @@
 import os
 import asyncio
-from openai import OpenAI
+import json
 from dotenv import load_dotenv
+from openai import OpenAI
+from environment import CloudCostEnv
 
 load_dotenv()
 
-# Actions ko readable aur interpretable banayein
-ACTION_NAMES = {
-    0: "Stay (Efficiency Optimized)",
-    1: "Scale Up (Capacity +1)",
-    2: "Scale Down (Cost -1)",
-    3: "Switch to Spot (Save 60%)"
-}
+# --- MANDATORY LOGGING FUNCTIONS (Don't Change) ---
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
+def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+
+def log_end(success: bool, steps: int, score: float, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
+
+# --- SYSTEM PROMPT ---
+SYSTEM_PROMPT = "You are a Cloud Infrastructure AI. Manage the cluster by choosing actions: 0(Stay), 1(Add Server), 2(Remove), 3(Toggle Spot). Reply with ONLY the integer."
+
+# --- NEW FUNCTION FOR DASHBOARD ---
 async def get_action_from_llama(state):
     api_base = os.getenv("API_BASE_URL")
     api_key = os.getenv("HF_TOKEN")
@@ -22,22 +33,47 @@ async def get_action_from_llama(state):
     state_data = state.model_dump_json() if hasattr(state, 'model_dump_json') else str(state)
     
     try:
-        # API Call with Timeout
         response = client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "Choose action 0-3. Reply ONLY with the integer."},
-                {"role": "user", "content": f"State: {state_data}"}
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Current State: {state_data}"}
             ],
-            max_tokens=5,
-            timeout=8
+            max_tokens=10
         )
         action_text = response.choices[0].message.content.strip()
         action_int = int(''.join(filter(str.isdigit, action_text))[0])
-        return action_int, f"{ACTION_NAMES.get(action_int, 'Stay')}"
-    
+        return action_int, action_text
     except Exception as e:
-        # 🔥 SMART FALLBACK: API fail hone par demo rukega nahi
-        load = state.incoming_load
-        fallback_action = 1 if load > 450 else 0
-        return fallback_action, f"{ACTION_NAMES[fallback_action]} (AI Fallback Active)"
+        return 0, f"Error: {str(e)}"
+
+# --- ORIGINAL MAIN LOGIC (For Terminal Testing) ---
+async def main():
+    api_base = os.getenv("API_BASE_URL")
+    api_key = os.getenv("HF_TOKEN")
+    model_name = os.getenv("MODEL_NAME")
+    
+    task_id = "daily_peaks" 
+    env = CloudCostEnv(task="medium")
+    log_start(task=task_id, env="CloudEnv-v1", model=model_name)
+    
+    rewards = []
+    state = await env.reset()
+    
+    try:
+        for step in range(1, 21): 
+            action_int, action_text = await get_action_from_llama(state)
+            state, reward, done = await env.step(action_int)
+            log_step(step=step, action=str(action_int), reward=reward, done=done)
+            rewards.append(reward)
+            if done: break
+            
+        avg_score = sum(rewards) / len(rewards) if rewards else 0
+        log_end(success=(avg_score >= 0.7), steps=len(rewards), score=avg_score, rewards=rewards)
+    except Exception as e:
+        log_step(step=0, action="error", reward=0.0, done=True, error=str(e))
+    finally:
+        await env.close()
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,7 +1,9 @@
-openai
-pydantic
+fastapi
+uvicorn
 gradio
 plotly
 pandas
-openenv-core
-python-detenv
+openai
+python-dotenv
+pydantic
+matplotlib

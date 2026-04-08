@@ -6,6 +6,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from datetime import datetime
+from flask import Flask, request, jsonify
+from environment import CloudCostEnv  # Assuming your environment.py has this class
+import os
 
 # ═══════════════════════════════════════════════════════════════════
 #  COLOR SYSTEM

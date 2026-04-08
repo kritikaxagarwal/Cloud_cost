@@ -13,7 +13,7 @@ class CloudCostEnv:
         self.servers = 5
         self.is_spot = False
 
-    async def reset(self):
+    def reset(self):
         self.reset_vars()
         return self.get_current_state()
 

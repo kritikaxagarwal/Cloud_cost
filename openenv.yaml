@@ -4,6 +4,16 @@ entry_point: "environment:CloudCostEnv"
 env_type: "continuous"
 tasks:
   - id: "daily_peaks"
-    difficulty: "medium"
+    difficulty: "easy"
     path: "inference.py"
     target_score: 0.8
+
+  - id: "weekly_budget"
+    difficulty: "medium"
+    path: "inference.py"
+    target_score: 0.75
+
+  - id: "chaos_mode"
+    difficulty: "hard"
+    path: "inference.py"
+    target_score: 0.7

@@ -6,9 +6,37 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from datetime import datetime
-from flask import Flask, request, jsonify
-from environment import CloudCostEnv  # Assuming your environment.py has this class
-import os
+from fastapi import FastAPI
+from pydantic import BaseModel
+import uvicorn
+from environment import CloudCostEnv
+
+# ═══════════════════════════════════════════════════════════════════
+#  FASTAPI — Checker endpoints (DO NOT REMOVE)
+# ═══════════════════════════════════════════════════════════════════
+fapp = FastAPI()
+_env = CloudCostEnv()
+
+class StepRequest(BaseModel):
+    action: int
+
+@fapp.post("/reset")
+async def api_reset():
+    state = await _env.reset()
+    return state
+
+@fapp.post("/step")
+async def api_step(req: StepRequest):
+    state, reward, done = await _env.step(req.action)
+    return {"state": state, "reward": reward, "done": done}
+
+@fapp.get("/state")
+async def api_state():
+    return await _env.state()
+
+@fapp.get("/health")
+async def health():
+    return {"status": "ok"}
 
 # ═══════════════════════════════════════════════════════════════════
 #  COLOR SYSTEM
@@ -279,7 +307,7 @@ XAI = {
 }
 
 def get_decision(user_load, spot_avail, chaos_monkey, budget_on, latency):
-    if chaos_monkey and latency > 120:   key = "chaos_resp"
+    if chaos_monkey and latency > 120:    key = "chaos_resp"
     elif user_load > 80 and latency > 80: key = "scale_up"
     elif user_load < 35:                  key = "scale_down"
     elif budget_on and spot_avail > 50:   key = "spot_switch"
@@ -296,7 +324,7 @@ def health_badge(latency, load, drisk):
     return "🟢  HEALTHY — All Systems Nominal", "green"
 
 # ═══════════════════════════════════════════════════════════════════
-#  MAIN SIMULATION  —  returns exactly 23 values, matching outputs
+#  MAIN SIMULATION
 # ═══════════════════════════════════════════════════════════════════
 _tick = 0
 
@@ -323,48 +351,21 @@ def run_simulation(scenario, user_load, spot_avail,
         user_load, spot_avail, chaos_monkey, budget_on, latency)
     health_txt, _ = health_badge(latency, load, drisk)
 
-    decision_md = f"""### 🧠 AI Decision
-**→ {action}**
-
-| | |
-|---|---|
-| Confidence | `{conf}%` |
-| Reason | {reason} |
-| Scenario | {scenario.split(':')[0]} |
-| Time | `{t}` |
-"""
-    xai_md     = "### 💡 Why did AI decide this?\n" + "".join(f"- ✔ {r}\n" for r in xai)
-    health_md  = f"""### {health_txt}
-
-| Metric | Value |
-|---|---|
-| Latency | `{latency} ms` |
-| Load | `{load} req/s` |
-| Downtime risk | `{drisk}` |
-| Agent score | `{score} / 1.0` |
-"""
-    pred_cost  = round(burn * (user_load / 48), 2)
-    pred_lat   = round(latency * (user_load / 58), 1)
-    risk_lbl   = ("🔴 HIGH"   if pred_lat > 100 or pred_cost > 0.65
-                  else "🟡 MEDIUM" if pred_lat > 60
-                  else "🟢 LOW")
-    whatif_md  = f"""### 🔮 What-If Simulation
-*If Load = {int(user_load)}% continues...*
-
-| Prediction | Value |
-|---|---|
-| Predicted cost | `${pred_cost}/hr` |
-| Predicted latency | `{pred_lat} ms` |
-| Risk level | {risk_lbl} |
-| Estimated savings | `{savings}` |
-"""
+    decision_md = f"""### 🧠 AI Decision\n**→ {action}**\n\n| | |\n|---|---|\n| Confidence | `{conf}%` |\n| Reason | {reason} |\n| Scenario | {scenario.split(':')[0]} |\n| Time | `{t}` |\n"""
+    xai_md      = "### 💡 Why did AI decide this?\n" + "".join(f"- ✔ {r}\n" for r in xai)
+    health_md   = f"""### {health_txt}\n\n| Metric | Value |\n|---|---|\n| Latency | `{latency} ms` |\n| Load | `{load} req/s` |\n| Downtime risk | `{drisk}` |\n| Agent score | `{score} / 1.0` |\n"""
+    pred_cost   = round(burn * (user_load / 48), 2)
+    pred_lat    = round(latency * (user_load / 58), 1)
+    risk_lbl    = ("🔴 HIGH"   if pred_lat > 100 or pred_cost > 0.65
+                   else "🟡 MEDIUM" if pred_lat > 60
+                   else "🟢 LOW")
+    whatif_md   = f"""### 🔮 What-If Simulation\n*If Load = {int(user_load)}% continues...*\n\n| Prediction | Value |\n|---|---|\n| Predicted cost | `${pred_cost}/hr` |\n| Predicted latency | `{pred_lat} ms` |\n| Risk level | {risk_lbl} |\n| Estimated savings | `{savings}` |\n"""
     log  = f"[{t}]  {scenario}\n"
     log += f"[{t}]  Load: {load} req/s  |  Servers: {servers}  |  Burn: ${burn}/hr\n"
     log += f"[{t}]  Latency: {latency} ms  |  Risk: {drisk}\n"
     log += f"[{t}]  DECISION: {action}  (conf {conf}%)\n"
     log += f"[{t}]  Score: {score} / 1.0  |  Savings: {savings}"
 
-    # ── charts ──
     gauge_fig  = make_gauge_chart(int(user_load), "User Load",  C["cyan"],   seed)
     burst_fig  = make_radial_burst(load,           "req/s",      C["purple"], seed)
     burst2_fig = make_radial_burst(int(score*100), "Score×100",  C["green"],  seed+1)
@@ -376,40 +377,37 @@ def run_simulation(scenario, user_load, spot_avail,
     before_fig = make_before_after(auto_scaling)
     whatif_fig = make_whatif(int(user_load), int(spot_avail))
 
-    # ── 23 return values — perfectly matches outputs list below ──
     return (
-        f"🚀  {load}  req/s",           # load_out
-        f"🖥️  {servers}  instances",    # server_out
-        f"💸  ${burn}/hr",              # burn_out
-        f"⚡  {latency} ms",            # latency_out
-        f"💰  {savings}  saved",        # savings_out
-        f"🏆  {score} / 1.0",           # score_out
-        decision_md,                    # decision_out
-        xai_md,                         # xai_out
-        health_md,                      # health_out
-        whatif_md,                      # whatif_out
-        log,                            # log_out
-        spend_str,                      # spend_out2
-        drisk,                          # risk_out
-        score,                          # score_num  ← raw float, fixes the Error bug
-        gauge_fig,                      # gauge_plot
-        burst_fig,                      # burst_plot
-        burst2_fig,                     # burst2_plot
-        area_fig,                       # area_plot
-        bar_fig,                        # bar_plot
-        wave_fig,                       # wave_plot
-        lat_fig,                        # lat_plot
-        reward_fig,                     # reward_plot
-        before_fig,                     # before_plot
-        whatif_fig,                     # whatif_plot  ← 24 total
+        f"🚀  {load}  req/s",
+        f"🖥️  {servers}  instances",
+        f"💸  ${burn}/hr",
+        f"⚡  {latency} ms",
+        f"💰  {savings}  saved",
+        f"🏆  {score} / 1.0",
+        decision_md,
+        xai_md,
+        health_md,
+        whatif_md,
+        log,
+        spend_str,
+        drisk,
+        score,
+        gauge_fig,
+        burst_fig,
+        burst2_fig,
+        area_fig,
+        bar_fig,
+        wave_fig,
+        lat_fig,
+        reward_fig,
+        before_fig,
+        whatif_fig,
     )
 
 # ═══════════════════════════════════════════════════════════════════
 #  CSS
 # ═══════════════════════════════════════════════════════════════════
 CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Space+Mono&family=Inter:wght@400;600;700;800&display=swap');
-
 body, .gradio-container {
     background: #06091a !important;
     color: #e2eeff !important;
@@ -419,55 +417,28 @@ body, .gradio-container {
     background: rgba(11,17,32,0.85) !important;
     border: 0.5px solid #1e3a5f !important;
     border-radius: 14px !important;
-    backdrop-filter: blur(12px) !important;
 }
 .hero-metric textarea, .hero-metric input {
     font-size: 22px !important; font-weight: 800 !important;
     color: #00e5ff !important; text-align: center !important;
-    background: rgba(0,229,255,0.06) !important;
-    border: 1px solid rgba(0,229,255,0.25) !important;
-    border-radius: 12px !important; padding: 18px 10px !important;
-}
-.sec-metric textarea, .sec-metric input {
-    font-size: 17px !important; font-weight: 700 !important;
-    color: #a78bfa !important; text-align: center !important;
-    background: rgba(167,139,250,0.06) !important;
-    border: 0.5px solid rgba(167,139,250,0.22) !important;
-    border-radius: 10px !important; padding: 12px 8px !important;
 }
 .card-decision { background: rgba(255,61,90,0.07) !important; border: 1px solid rgba(255,61,90,0.35) !important; border-radius: 14px !important; padding: 6px 10px !important; }
-.card-decision h3 { color: #ff3d5a !important; }
 .card-xai { background: rgba(0,229,255,0.05) !important; border: 1px solid rgba(0,229,255,0.25) !important; border-radius: 14px !important; padding: 6px 10px !important; }
-.card-xai h3 { color: #00e5ff !important; }
 .card-health { background: rgba(0,255,157,0.06) !important; border: 1px solid rgba(0,255,157,0.28) !important; border-radius: 14px !important; padding: 6px 10px !important; }
-.card-health h3 { color: #00ff9d !important; }
 .card-whatif { background: rgba(192,132,252,0.06) !important; border: 1px solid rgba(192,132,252,0.28) !important; border-radius: 14px !important; padding: 6px 10px !important; }
-.card-whatif h3 { color: #c084fc !important; }
 .gr-button-primary {
     background: linear-gradient(135deg, rgba(0,229,255,0.15), rgba(0,255,157,0.10)) !important;
     border: 1.5px solid #00e5ff !important; color: #00e5ff !important;
     font-size: 15px !important; font-weight: 700 !important;
-    letter-spacing: 2px !important; border-radius: 12px !important;
-    padding: 14px 0 !important; text-transform: uppercase !important;
+    border-radius: 12px !important; padding: 14px 0 !important;
 }
-.gr-button-primary:hover { background: rgba(0,229,255,0.22) !important; border-color: #00ff9d !important; color: #00ff9d !important; }
-label, .gr-input-label { color: #4a6080 !important; font-size: 11px !important; letter-spacing: 1.5px !important; text-transform: uppercase !important; }
-input, select, textarea { background: #0a1020 !important; color: #e2eeff !important; border: 0.5px solid #1e3a5f !important; border-radius: 8px !important; font-family: 'Inter', sans-serif !important; }
-.log-panel textarea { font-family: 'Space Mono', monospace !important; font-size: 11.5px !important; color: #7ab0d0 !important; background: #050810 !important; border: 0.5px solid #1e3a5f !important; border-radius: 10px !important; line-height: 1.9 !important; }
-.score-box input { font-size: 30px !important; font-weight: 900 !important; color: #00ff9d !important; text-align: center !important; background: rgba(0,255,157,0.07) !important; border: 1px solid rgba(0,255,157,0.30) !important; border-radius: 12px !important; }
-.gr-plot { background: rgba(11,17,32,0.90) !important; border: 0.5px solid #1e3a5f !important; border-radius: 12px !important; padding: 6px !important; }
-.gr-markdown table { font-size: 13px !important; width: 100% !important; }
-.gr-markdown td, .gr-markdown th { padding: 5px 8px !important; border-color: #1e3a5f !important; }
-.gr-markdown h3 { font-size: 14px !important; margin-bottom: 8px !important; }
-.gr-markdown code { background: rgba(0,229,255,0.10) !important; color: #00e5ff !important; border-radius: 4px !important; padding: 1px 6px !important; font-family: 'Space Mono', monospace !important; font-size: 12px !important; }
-hr { border-color: #1e3a5f !important; margin: 14px 0 !important; }
-.gr-markdown h2 { color: #00e5ff !important; letter-spacing: 1px !important; border-bottom: 1px solid #1e3a5f !important; padding-bottom: 6px !important; }
+.log-panel textarea { font-family: monospace !important; font-size: 11.5px !important; color: #7ab0d0 !important; background: #050810 !important; }
 """
 
 # ═══════════════════════════════════════════════════════════════════
-#  UI
+#  GRADIO UI
 # ═══════════════════════════════════════════════════════════════════
-with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
+with gr.Blocks(title="☁️ Cloud-Cost Guardian AI") as demo:
 
     gr.Markdown("# ☁️  Cloud-Cost Guardian AI\n#### RL-Powered Autonomous Infrastructure — Live Intelligence Dashboard\n---")
 
@@ -478,9 +449,9 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
         score_out   = gr.Textbox(label="🏆 Agent Score",    interactive=False, elem_classes="hero-metric")
 
     with gr.Row(equal_height=True):
-        server_out  = gr.Textbox(label="🖥️ Servers",   interactive=False, elem_classes="sec-metric")
-        burn_out    = gr.Textbox(label="💸 Burn Rate",  interactive=False, elem_classes="sec-metric")
-        latency_out = gr.Textbox(label="⚡ Latency",    interactive=False, elem_classes="sec-metric")
+        server_out  = gr.Textbox(label="🖥️ Servers",   interactive=False)
+        burn_out    = gr.Textbox(label="💸 Burn Rate",  interactive=False)
+        latency_out = gr.Textbox(label="⚡ Latency",    interactive=False)
 
     gr.Markdown("---")
 
@@ -504,7 +475,7 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
             xai_out      = gr.Markdown("### 💡 Explainable AI\n*Waiting...*",          elem_classes="card-xai")
 
         with gr.Column(scale=1, min_width=260):
-            health_out   = gr.Markdown("### 🟢 Health Status\n*Click Run...*",         elem_classes="card-health")
+            health_out   = gr.Markdown("### 🟢 Health Status\n*Click Run...*",          elem_classes="card-health")
             whatif_out   = gr.Markdown("### 🔮 What-If Simulation\n*Adjust sliders...*",elem_classes="card-whatif")
 
     gr.Markdown("---")
@@ -513,9 +484,9 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
         with gr.Column(scale=3):
             log_out    = gr.Textbox(lines=5, label="📋 Agent Action Log", interactive=False, elem_classes="log-panel")
         with gr.Column(scale=1):
-            spend_out2 = gr.Textbox(label="Total Spend",       interactive=False)
-            risk_out   = gr.Textbox(label="Downtime Risk",      interactive=False)
-            score_num  = gr.Number( label="Agent Score / 1.0",  interactive=False, elem_classes="score-box")
+            spend_out2 = gr.Textbox(label="Total Spend",      interactive=False)
+            risk_out   = gr.Textbox(label="Downtime Risk",     interactive=False)
+            score_num  = gr.Number( label="Agent Score / 1.0", interactive=False)
 
     gr.Markdown("---")
     gr.Markdown("## 🎯 Radial Intelligence — Live Gauges")
@@ -545,7 +516,6 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
 
     gr.Markdown("> 💡 **Pro tip:** Turn on **Chaos Monkey** + set Load to **90%** for maximum drama!")
 
-    # ── wire — outputs count must equal return tuple length (24) ──
     run_btn.click(
         fn=run_simulation,
         inputs=[scenario, user_load, spot_avail, chaos_monkey, budget_constr, auto_scaling],
@@ -553,7 +523,7 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
             load_out, server_out, burn_out, latency_out, savings_out, score_out,
             decision_out, xai_out, health_out, whatif_out,
             log_out, spend_out2, risk_out,
-            score_num,          # gr.Number ← now receives raw float from return tuple
+            score_num,
             gauge_plot, burst_plot, burst2_plot,
             area_plot, bar_plot,
             wave_plot, lat_plot,
@@ -561,5 +531,11 @@ with gr.Blocks(css=CSS, title="☁️ Cloud-Cost Guardian AI") as demo:
         ]
     )
 
+# ═══════════════════════════════════════════════════════════════════
+#  MOUNT GRADIO INTO FASTAPI — checker gets /reset /step /state
+#  Dashboard available at /ui
+# ═══════════════════════════════════════════════════════════════════
+app = gr.mount_gradio_app(fapp, demo, path="/")
+
 if __name__ == "__main__":
-    demo.launch(share=True)
+    uvicorn.run(app, host="0.0.0.0", port=7860)

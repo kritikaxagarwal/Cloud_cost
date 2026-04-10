@@ -1,15 +1,23 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.backends.legacy:build"
-
 [project]
 name = "cloud-cost-guardian"
 version = "0.1.0"
-description = "Cloud Cost Guardian AI - RL environment for optimizing cloud infrastructure costs"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 dependencies = [
-    "openenv-core>=0.2.0"
+    "openenv-core>=0.2.0",
+    "fastapi",
+    "uvicorn",
+    "gradio",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "openai",
+    "python-dotenv",
+    "pydantic",
 ]
 
 [project.scripts]
-server = "server.app:main"
+server = "server.app:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

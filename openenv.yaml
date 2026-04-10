@@ -7,28 +7,13 @@ tasks:
     difficulty: "easy"
     path: "inference.py"
     target_score: 0.8
-    task: "easy"
-    grader:
-      type: "score"
-      metric: "avg_reward"
-      threshold: 0.8
 
   - id: "weekly_budget"
     difficulty: "medium"
     path: "inference.py"
     target_score: 0.75
-    task: "medium"
-    grader:
-      type: "score"
-      metric: "avg_reward"
-      threshold: 0.75
 
   - id: "chaos_mode"
     difficulty: "hard"
     path: "inference.py"
     target_score: 0.7
-    task: "hard"
-    grader:
-      type: "score"
-      metric: "avg_reward"
-      threshold: 0.7

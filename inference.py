@@ -4,12 +4,12 @@ import json
 from dotenv import load_dotenv
 from openai import OpenAI
 from environment import CloudCostEnv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request  # ADD THIS
 
 load_dotenv()
 
-app = Flask(__name__)
-env = None
+app = Flask(__name__)  # ADD THIS
+env = None             # ADD THIS - global env
 
 # --- MANDATORY LOGGING FUNCTIONS (Don't Change) ---
 def log_start(task: str, env: str, model: str) -> None:
@@ -50,19 +50,18 @@ async def get_action_from_llama(state):
     except Exception as e:
         return 0, f"Error: {str(e)}"
 
-# --- ROUTES ---
+# ============================================
+# ADD THESE 3 ROUTES — THIS IS THE FIX
+# ============================================
 
-@app.route('/reset', methods=['POST'])
+@app.route('/reset', methods=['POST'])          # <-- FIXES your error
 def reset():
     global env
-    data = request.get_json() or {}
-    task = data.get("task", "medium")  # now accepts task from grader
-
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    env = CloudCostEnv(task=task)
-    state = env.reset()  # reset() is sync
-    log_start(task=task, env="CloudEnv-v1", model=os.getenv("MODEL_NAME"))
+    env = CloudCostEnv(task="medium")
+    state = loop.run_until_complete(env.reset())
+    log_start(task="daily_peaks", env="CloudEnv-v1", model=os.getenv("MODEL_NAME"))
     state_data = state.model_dump_json() if hasattr(state, 'model_dump_json') else str(state)
     return jsonify({"status": "ok", "state": json.loads(state_data)}), 200
 
@@ -81,6 +80,8 @@ def step():
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({"status": "ok"}), 200
+
+# ============================================
 
 # --- ORIGINAL TERMINAL TESTING (unchanged) ---
 async def main():
@@ -112,4 +113,5 @@ async def main():
         await env_local.close()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+    # Starts Flask server when deployed
+    app.run(host="0.0.0.0", port=8080)   # <-- runs the web server

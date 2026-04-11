@@ -12,7 +12,7 @@ class CloudCostEnv:
         self.servers = 5
         self.is_spot = False
 
-    async def reset(self):          # ← added async HERE
+    async def reset(self):
         self.reset_vars()
         return self.get_current_state()
 
@@ -29,7 +29,7 @@ class CloudCostEnv:
         cost = self.servers * current_rate
 
         return State(
-            cpu_usage=min(100.0, (load / (capacity + 1)) * 100),
+            cpu_usage=min(99.9, max(0.1, (load / (capacity + 1)) * 100)),
             active_servers=self.servers,
             hourly_burn_rate=round(cost, 2),
             response_latency=round(latency, 2),
@@ -47,11 +47,20 @@ class CloudCostEnv:
         self.steps += 1
         state = self.get_current_state()
 
-        reward = 1.0
+        # Reward strictly between 0 and 1 — never exactly 0.0 or 1.0
+        reward = 0.95
+
         if state.response_latency > 150:
-            reward -= 0.7
+            reward -= 0.35
+        if state.response_latency > 100:
+            reward -= 0.15
         if state.hourly_burn_rate > 5.0:
-            reward -= 0.5
+            reward -= 0.25
+        if state.hourly_burn_rate > 3.0:
+            reward -= 0.10
+
+        # Clamp strictly between 0.01 and 0.99
+        reward = max(0.01, min(0.99, round(reward, 4)))
 
         done = self.steps >= 20
         return state, reward, done

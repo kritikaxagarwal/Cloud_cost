@@ -2,17 +2,23 @@ version: "1.0"
 name: "cloud-cost-guardian"
 entry_point: "environment:CloudCostEnv"
 env_type: "continuous"
+
+server:
+  host: "0.0.0.0"
+  port: 7860
+  reset_endpoint: "/reset"
+  step_endpoint: "/step"
+  health_endpoint: "/health"
+
 tasks:
   - id: "daily_peaks"
     difficulty: "easy"
     path: "inference.py"
     target_score: 0.8
-
   - id: "weekly_budget"
     difficulty: "medium"
     path: "inference.py"
     target_score: 0.75
-
   - id: "chaos_mode"
     difficulty: "hard"
     path: "inference.py"

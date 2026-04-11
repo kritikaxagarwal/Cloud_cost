@@ -1,10 +1,9 @@
+gradio
 fastapi
 uvicorn
-gradio
-plotly
-matplotlib
-numpy
-pandas
 openai
 python-dotenv
 pydantic
+matplotlib
+numpy
+pandas

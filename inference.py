@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import traceback
 from dotenv import load_dotenv
 from openai import OpenAI
 from environment import CloudCostEnv
@@ -10,61 +11,30 @@ load_dotenv()
 
 app = Flask(__name__)
 env = None
-event_loop = None
 
-# --- MANDATORY LOGGING FUNCTIONS (Don't Change) ---
-def log_start(task: str, env_name: str, model: str) -> None:
+def log_start(task, env_name, model):
     print(f"[START] task={task} env={env_name} model={model}", flush=True)
 
-def log_step(step: int, action: str, reward: float, done: bool, error=None) -> None:
+def log_step(step, action, reward, done, error=None):
     error_val = error if error else "null"
-    done_val = str(done).lower()
-    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={done_val} error={error_val}", flush=True)
+    print(f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}", flush=True)
 
-def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+def log_end(success, steps, score, rewards):
     rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}", flush=True)
 
-# --- SYSTEM PROMPT ---
 SYSTEM_PROMPT = "You are a Cloud Infrastructure AI. Manage the cluster by choosing actions: 0(Stay), 1(Add Server), 2(Remove), 3(Toggle Spot). Reply with ONLY the integer."
 
-# --- GET EVENT LOOP (fixes asyncio + Flask conflict) ---
-def get_loop():
-    global event_loop
+def run_async(coro):
     try:
-        if event_loop is None or event_loop.is_closed():
-            event_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(event_loop)
-        return event_loop
+        loop = asyncio.get_event_loop()
+        if loop.is_closed():
+            raise RuntimeError
+        return loop.run_until_complete(coro)
     except Exception:
-        event_loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(event_loop)
-        return event_loop
-
-# --- LLM ACTION ---
-async def get_action_from_llama(state):
-    api_base = os.getenv("API_BASE_URL")
-    api_key = os.getenv("HF_TOKEN")
-    model_name = os.getenv("MODEL_NAME")
-    client = OpenAI(base_url=api_base, api_key=api_key)
-    state_data = state.model_dump_json() if hasattr(state, 'model_dump_json') else str(state)
-
-    try:
-        response = client.chat.completions.create(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Current State: {state_data}"}
-            ],
-            max_tokens=10
-        )
-        action_text = response.choices[0].message.content.strip()
-        action_int = int(''.join(filter(str.isdigit, action_text))[0])
-        return action_int, action_text
-    except Exception as e:
-        return 0, f"Error: {str(e)}"
-
-# --- ROUTES ---
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -73,10 +43,10 @@ def health():
 @app.route('/reset', methods=['POST'])
 def reset():
     global env
+    print("[DEBUG] /reset called", flush=True)
     try:
-        loop = get_loop()
         env = CloudCostEnv(task="medium")
-        state = loop.run_until_complete(env.reset())
+        state = run_async(env.reset())
         log_start(
             task="daily_peaks",
             env_name="CloudEnv-v1",
@@ -86,12 +56,22 @@ def reset():
             state_data = state.model_dump()
         elif hasattr(state, 'model_dump_json'):
             state_data = json.loads(state.model_dump_json())
+        elif hasattr(state, '__dict__'):
+            state_data = state.__dict__
         else:
             state_data = str(state)
+
+        print("[DEBUG] /reset success", flush=True)
         return jsonify({"status": "ok", "state": state_data}), 200
+
     except Exception as e:
-        print(f"[ERROR] reset failed: {str(e)}", flush=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        full_error = traceback.format_exc()
+        print(f"[ERROR] /reset crashed:\n{full_error}", flush=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "trace": full_error
+        }), 500
 
 @app.route('/step', methods=['POST'])
 def step():
@@ -99,49 +79,36 @@ def step():
     try:
         if env is None:
             return jsonify({"status": "error", "message": "Call /reset first"}), 400
+
         data = request.get_json()
         action = int(data.get("action", 0))
-        loop = get_loop()
-        state, reward, done = loop.run_until_complete(env.step(action))
+        state, reward, done = run_async(env.step(action))
         log_step(step=1, action=str(action), reward=reward, done=done)
+
         if hasattr(state, 'model_dump'):
             state_data = state.model_dump()
         elif hasattr(state, 'model_dump_json'):
             state_data = json.loads(state.model_dump_json())
+        elif hasattr(state, '__dict__'):
+            state_data = state.__dict__
         else:
             state_data = str(state)
+
         return jsonify({
             "state": state_data,
             "reward": reward,
             "done": done
         }), 200
-    except Exception as e:
-        print(f"[ERROR] step failed: {str(e)}", flush=True)
-        return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- TERMINAL TESTING (unchanged) ---
-async def main():
-    model_name = os.getenv("MODEL_NAME")
-    task_id = "daily_peaks"
-    env_local = CloudCostEnv(task="medium")
-    log_start(task=task_id, env_name="CloudEnv-v1", model=model_name)
-    rewards = []
-    state = await env_local.reset()
-    try:
-        for step_num in range(1, 21):
-            action_int, action_text = await get_action_from_llama(state)
-            state, reward, done = await env_local.step(action_int)
-            log_step(step=step_num, action=str(action_int), reward=reward, done=done)
-            rewards.append(reward)
-            if done:
-                break
-        avg_score = sum(rewards) / len(rewards) if rewards else 0
-        log_end(success=(avg_score >= 0.7), steps=len(rewards),
-                score=avg_score, rewards=rewards)
     except Exception as e:
-        log_step(step=0, action="error", reward=0.0, done=True, error=str(e))
-    finally:
-        await env_local.close()
+        full_error = traceback.format_exc()
+        print(f"[ERROR] /step crashed:\n{full_error}", flush=True)
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+            "trace": full_error
+        }), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=7860, debug=False)
+    print("[BOOT] Flask starting on port 8080", flush=True)
+    app.run(host="0.0.0.0", port=8080, debug=False)
